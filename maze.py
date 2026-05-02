@@ -1,13 +1,15 @@
 import sys
 
 class Node:
-    def __init__(self, state, parent, action):
+    def __init__(self, state, parent, action, cost, steps):
         self.state = state
         self.parent = parent
         self.action = action
+        self.cost = cost
+        self.steps = steps
     
     def __repr__(self):
-        return f"{self.state} with action {self.action}"
+        return f"{self.state}: {self.cost}"
 
 class StackFrontier:
     def __init__(self):
@@ -32,7 +34,35 @@ class QueueFrontier(StackFrontier):
         node = self.frontier[0]
         self.frontier.pop(0)
         return node
+
+class KnownFrontier(QueueFrontier):
+    #Keep track of lowest heusristic cost value
+    n = 0
     
+    #Intelligent choice of node as per the cost of travel
+    def remove(self):
+        #Check if the frontier has more than 1 value
+        if len(self.frontier) > 1:
+            #Checks if the previous heuristic cost value(N-1) is less the current value
+            if KnownFrontier.n != 0:
+                if ((self.frontier[KnownFrontier.n-1].cost + self.frontier[KnownFrontier.n-1].steps) <=
+                (self.frontier[KnownFrontier.n].cost + self.frontier[KnownFrontier.n].steps)):
+                    KnownFrontier.n-=1
+
+            #In the event the value ahead(N+1) has a lower heuristic cost    
+            elif (self.frontier[KnownFrontier.n+1].cost + self.frontier[KnownFrontier.n+1].steps < 
+                  self.frontier[KnownFrontier.n].cost + self.frontier[KnownFrontier.n].steps):
+                KnownFrontier.n+=1
+        
+        node = self.frontier[KnownFrontier.n]
+        self.frontier.pop(KnownFrontier.n)
+        return node
+    
+    def __repr__(self):
+        values = [x for x in self.frontier]
+        return f"[{values}]"
+
+
 class Maze:
     def __init__(self, filename):
         with open(filename) as f:
@@ -111,21 +141,30 @@ class Maze:
 
     def solve(self):
         #define empty frontier
-        self.frontier = StackFrontier()
+        self.frontier = KnownFrontier()
         #set empty explored set and no_ of explored sets
 
         self.num_explored = 0
 
         self.explored = set()
         #initialise the start state
-        self.frontier.add(Node(state=self.start, parent= None, action=None))
+        self.frontier.add(Node(state=self.start,
+                                parent= None,
+                                action=None,
+                                cost=(
+                                    abs(self.start[0] - self.goal[0]) + abs(self.start[1] - self.goal[1])
+                                    ),
+                                steps = 0
+                                    ))
         print('Solving...')
 
         while True:
+
             if self.frontier.empty():
                 raise Exception("No solution exists")
 
             #expand Node
+            print(self.frontier)
             node = self.frontier.remove()
             self.num_explored +=1
             #analyze Node
@@ -145,9 +184,17 @@ class Maze:
                 #Expand Node
                 self.explored.add(node.state)
 
-                for state, action in self.neighbours(node.state):
-                    if state not in self.explored and not self.frontier.contains_state(state):
-                        new_node = Node(state=state, parent=node, action=action)
+                for (i, j), action in self.neighbours(node.state):
+                    if (i, j) not in self.explored and not self.frontier.contains_state((i, j)):
+                        new_node = Node(
+                            state=(i, j),
+                            parent=node,
+                            action=action,
+                            cost=(
+                                abs(i - self.goal[0]) + abs(j - self.goal[1])
+                                ),
+                            steps=node.steps+1
+                            )
                         self.frontier.add(new_node)
                         
 
