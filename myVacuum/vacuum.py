@@ -1,4 +1,5 @@
 import sys
+import time
 
 class Node:
     def __init__(self, state, parent, action, dirty: bool, cost=None, steps=None):
@@ -10,7 +11,13 @@ class Node:
         self.steps = steps
     
     def __repr__(self):
-        return f"{self.state}: {self.dirty}"
+        return f"{self.state}: {self.action}"
+    
+    def clean(self):
+        self.dirty = True
+    
+    def __eq__(self, other):
+        return self.state == other.state
 
 class StackFrontier:
     def __init__(self):
@@ -22,6 +29,10 @@ class StackFrontier:
     def add(self, node):
         self.frontier.append(node)
     
+    def addleft(self, node):
+        self.frontier.insert(0,node)
+
+
     def empty(self):
         return len(self.frontier) == 0
     
@@ -30,6 +41,8 @@ class StackFrontier:
         self.frontier.pop(-1)
         return node
 
+    def refresh(self):
+        self.frontier.clear()
     
     def __repr__(self):
         values = [x for x in self.frontier]
@@ -74,7 +87,7 @@ class Environment:
         self.width = max(len(rw) for rw in environment)
 
         #define walls
-        self.perimeter = []
+        self.walls = []
         self.dirt = []
         self.area = []
         for i, row in enumerate(environment):
@@ -100,17 +113,15 @@ class Environment:
                     rows.append(True)
                     dirt.append(False)
                 
-            self.perimeter.append(rows)
+            self.walls.append(rows)
             self.dirt.append(dirt)
         
 
-        self.solution = None # stores array of actions [0] and array of cells to move through(state) [1]
+        self.cleaned = None #stores all passed values
     
-    def neighbours(self, state):
+    def horizontal_action(self, state):
         row, col = state
         candidates = [
-            ((row -1, col),"up"),
-            ((row + 1, col), "down"),
             ((row, col - 1), "left"),
             ((row, col + 1), "right")
         ]
@@ -118,28 +129,59 @@ class Environment:
         result = []
         for (i, j), action in candidates:
             
-            if 0<= i < self.height and 0 <= j < self.width and not self.perimeter[i][j]:
+            if 0<= i < self.height and 0 <= j < self.width and not self.walls[i][j]:
                 result.append(((i, j), action))
         
         return result
     
+    def vertical_action(self, state):
+        row, col = state
+        candidates = [
+            ((row -1, col),"up"),
+            ((row + 1, col), "down"),
+        ]
+
+        result = []
+        for (i, j), action in candidates:
+            
+            if 0<= i < self.height and 0 <= j < self.width and not self.walls[i][j]:
+                result.append(((i, j), action))
+        
+        return result if len(result) != 0 else None
+    
+    def action(self, state):
+        row, col = state
+        candidates = [
+            ((row, col - 1), "left"),
+            ((row -1, col),"up"),
+            ((row, col + 1), "right"),
+            ((row + 1, col), "down"),
+        ]
+
+        result = []
+        for (i, j), action in candidates:
+            
+            if 0<= i < self.height and 0 <= j < self.width and not self.walls[i][j]:
+                result.append(((i, j), action))
+        
+        return result
 
 
     def print(self):
-        solution = self.solution[1] if self.solution is not None else None
+        cleaned = self.cleaned if self.cleaned is not None else None
 
         #printing full environment
         print()
-        for i, row in enumerate(self.perimeter):
+        for i, row in enumerate(self.walls):
             print()
             for j, col in enumerate(row):
                 if col:
                     print("#",end="")
                 elif (i, j) == self.start:
                     print("A", end="")
-                elif (i, j) == self.goal:
+                elif (i, j) in self.area:
                     print("B", end="")
-                elif solution is not None and (i, j) in solution:
+                elif cleaned is not None and (i, j) in cleaned:
                     print("*", end="")
                 else:
                     print(" ", end="")
@@ -153,7 +195,7 @@ class Environment:
 
         self.num_explored = 0
 
-        self.explored = set()
+        self.cleaned = set()
         #initialise the start state
         self.frontier.add(Node(state=current,
                                 parent= None,
@@ -168,7 +210,7 @@ class Environment:
         while True:
 
             if self.frontier.empty():
-                raise Exception("No solution exists")
+                raise Exception("No cleaned exists")
 
             #expand Node
             print(self.frontier)
@@ -185,18 +227,19 @@ class Environment:
 
                 action.reverse()
                 cells.reverse()
-                self.solution = (action, cells)
+                self.cleaned = (action, cells)
                 return
             else:
                 #Expand Node
-                self.explored.add(node.state)
+                self.cleaned.add(node.state)
 
-                for (i, j), action in self.neighbours(node.state):
-                    if (i, j) not in self.explored and not self.frontier.contains_state((i, j)):
+                for (i, j), action in self.action(node.state):
+                    if (i, j) not in self.cleaned and not self.frontier.contains_state((i, j)):
                         new_node = Node(
                             state=(i, j),
                             parent=node,
                             action=action,
+                            dirty=False,
                             cost=(
                                 abs(i - self.start[0]) + abs(j - self.start[1])
                                 ),
@@ -205,65 +248,101 @@ class Environment:
                         self.frontier.add(new_node)
 
     def solve(self):
-        #define empty frontier
+        #has no frontier since it can't jump from place to place. Instead it'll look at horizontal_action alone
+        
+        self.cleaned = set()
         self.frontier = StackFrontier()
-        #set empty explored set and no_ of explored sets
-
-        self.num_explored = 0
-
-        self.explored = set()
-        #initialise the start state
-        self.frontier.add(Node(state=self.start,
-                                parent= None,
-                                action=None,
-                                dirt = False
-                                    ))
-
+        node = Node(
+            state=self.start,
+            parent=None,
+            action=None,
+            dirty=False,
+        )
+        self.frontier.add(node)
+        
+            
+        round = 0
         while True:
-
-            #Check if the area is dirty
-            dirt = None if len(self.area) == 0 else self.area
-
+            #Check if there are any valid steps to make or return home (but for now)
             if self.frontier.empty():
-                raise Exception("No solution exists")
+                print("the house is clean!")
+                return
 
-            #expand Node
+            #Check if house/environment is clean
+            if len(self.area) == 0:
+                print("the house is clean!")
+                return
+            
+            #Remove a node from the frontier
             node = self.frontier.remove()
-            self.num_explored +=1
-            self.output_image()
+            self.frontier.refresh()
 
-            #Clean node
+
+
+            #Clean surface
             if node.dirty:
                 self.area.remove(node.state)
 
-            #analyze if area is still dirty
-            if dirt is None:
-                print("The area is clean!")
-                self.go_home(node.state)
-                return
-            else:
-                #Expand Node
-                self.explored.add(node.state)
+            self.cleaned.add(node.state)
+            
+            #Determine if vacuum hits a wall
+            i, j = node.state
+            if(self.walls[i][j+1] or self.walls[i][j-1]) and node.action is not None:
+                #Should move up or down
+                print("wall!")
+            print(f"Cleaned: {self.cleaned}")
+            print(node.state)
+            for state, action in self.horizontal_action(node.state):
+                if ((state not in self.cleaned and not self.frontier.contains_state(state) and state not in self.area)):
+                    new_node = Node(
+                        state=state,
+                        parent=node,
+                        action=action,
+                        dirty=False,
+                        steps=1,
+                    )
+                elif ((state not in self.cleaned and not self.frontier.contains_state(state) and state in self.area)):
+                    new_node = Node(
+                        state=state,
+                        parent=node,
+                        action=action,
+                        dirty=True,
+                        steps=1
+                    )
+                self.frontier.add(new_node)
+                print(self.frontier)
+            if len(self.frontier.frontier) >1 and self.frontier.frontier[0] == self.frontier.frontier[1]:
+                self.frontier.refresh()
+                print("They are the same")
 
-                for (i, j), action in self.neighbours(node.state):
-                    if (i, j) not in self.explored and not self.frontier.contains_state((i, j)) and (i, j) not in self.area:
+
+            if len(self.frontier.frontier) <= 1 and round != 0:
+                for state, action in self.vertical_action(node.state):
+                    if ((state not in self.cleaned and not self.frontier.contains_state(state) and state not in self.area)):
                         new_node = Node(
-                            state=(i, j),
+                            state=state,
                             parent=node,
                             action=action,
-                            dirt=False
-                            )
-                    if (i, j) not in self.explored and not self.frontier.contains_state((i, j)) and (i, j) in self.area:
+                            dirty=False,
+                            steps=1,
+                        )
+                    elif ((state not in self.cleaned and not self.frontier.contains_state(state) and state in self.area)):
                         new_node = Node(
-                            state=(i, j),
+                            state=state,
                             parent=node,
                             action=action,
-                            dirt=True
-                            )
-                        self.frontier.add(new_node)
+                            dirty=True,
+                            steps=1
+                        )
+                    self.frontier.add(new_node)
+                    round = 0
+            round +=1
+            self.output_image("cleaned.png")
+
+
                         
 
-    def output_image(self, filename, show_solution=True, show_explored=False):
+    def output_image(self, filename, show_cleaned=True):
         from PIL import Image, ImageDraw
         cell_size = 50
         cell_border = 2
@@ -276,8 +355,8 @@ class Environment:
         )
         draw = ImageDraw.Draw(img)
 
-        solution = self.solution[1] if self.solution is not None else None
-        for i, row in enumerate(self.perimeter):
+        cleaned = self.cleaned if self.cleaned is not None else None
+        for i, row in enumerate(self.walls):
             for j, col in enumerate(row):
 
                 #if wall
@@ -289,16 +368,12 @@ class Environment:
                     fill = (255, 0, 0)
                 
                 #End/Goal
-                elif (i, j) == self.goal:
-                    fill = (0, 171, 28)
-                
-                #Solution
-                elif solution is not None and  (i, j) in solution:
+                elif (i, j) in self.area:
                     fill = (220, 235, 113)
                 
-                #Explored
-                elif solution is not None and show_explored and (i, j) in self.explored:
-                    fill = (212, 97, 85)
+                #cleaned
+                elif cleaned is not None and (i, j) in self.cleaned:
+                    fill = (6, 109, 250)
                 
                 #Empty cell
                 else:
@@ -311,10 +386,17 @@ class Environment:
                       fill=fill
                 )
 
+        time.sleep(0.5)
         img.save(filename)
 
 
 if len(sys.argv) != 2:
-    sys.exit("Usage: python environment.py environment.txt")
+    sys.exit("Usage: python vacuum.py environment.txt")
 
 ###run vacuum
+house = Environment("environment.txt")
+house.print()
+print("Its cleaning time!")
+house.solve()
+house.print()
+house.output_image("cleaned.png")
